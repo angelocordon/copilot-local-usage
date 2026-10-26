@@ -101,9 +101,9 @@ test('CLI prints a report without warnings', () => {
 
 test('report options validate grouping and limits', () => {
   assert.deepEqual(reportOptions(), { by: 'model', limit: 30, group: 'flat' });
-  assert.deepEqual(reportOptions({ by: 'session' }), { by: 'session', limit: 30, group: 'week', order: 'credits' });
+  assert.deepEqual(reportOptions({ by: 'session' }), { by: 'session', limit: 30, group: 'week', order: 'cost' });
   for (const limit of ['0', 'all']) {
-    assert.deepEqual(reportOptions({ by: 'session', limit }), { by: 'session', limit: 0, group: 'week', order: 'credits' });
+    assert.deepEqual(reportOptions({ by: 'session', limit }), { by: 'session', limit: 0, group: 'week', order: 'cost' });
   }
   for (const limit of ['-1', '1.5', 'NaN', '', '9007199254740992']) {
     assert.throws(() => reportOptions({ limit }), /--limit/);
@@ -112,7 +112,8 @@ test('report options validate grouping and limits', () => {
   assert.throws(() => reportOptions({ by: 'session', group: 'day' }), /--group/);
   assert.throws(() => reportOptions({ group: 'week' }), /requires --by session/);
   assert.equal(reportOptions({ by: 'session', order: 'date' }).order, 'date');
-  for (const options of [{ order: 'credits' }, { order: 'date' }, { by: 'session', order: 'invalid' }]) {
+  assert.equal(reportOptions({ by: 'session', order: 'cost' }).order, 'cost');
+  for (const options of [{ order: 'cost' }, { order: 'date' }, { by: 'session', order: 'credits' }, { by: 'session', order: 'invalid' }]) {
     assert.throws(() => reportOptions(options), /--order/);
   }
 });
@@ -162,15 +163,15 @@ test('session ordering precedes limits in flat and weekly reports without changi
     /^(?:Fix the build|orphan|owner\/free|empty|\(unknown session\))\s/.test(line));
   const render = (group, order, limit = 'all') =>
     formatReport(rows, '2026-10', costDbPath, { by: 'session', group, order, limit });
-  const credits = render('flat', 'credits');
+  const costs = render('flat', 'cost');
   const dates = render('flat', 'date');
-  assert.equal(credits, formatReport(rows, '2026-10', costDbPath, { by: 'session', group: 'flat', limit: 'all' }));
-  assert.match(sessionLines(credits)[0], /^Fix the build/);
+  assert.equal(costs, formatReport(rows, '2026-10', costDbPath, { by: 'session', group: 'flat', limit: 'all' }));
+  assert.match(sessionLines(costs)[0], /^Fix the build/);
   assert.deepEqual(sessionLines(dates).map((line) => line.match(/\d{4}-\d{2}-\d{2}/)[0]),
     ['2026-10-10', '2026-10-09', '2026-10-08', '2026-10-07', '2026-10-01']);
   assert.match(sessionLines(render('flat', 'date', 1))[0], /^\(unknown session\)/);
-  assert.match(sessionLines(render('flat', 'credits', 1))[0], /^Fix the build/);
-  for (const order of ['credits', 'date']) {
+  assert.match(sessionLines(render('flat', 'cost', 1))[0], /^Fix the build/);
+  for (const order of ['cost', 'date']) {
     assert.match(render('flat', order, 1), /TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
     const weekly = render('week', order, 1);
     assert.deepEqual([...weekly.matchAll(/^Week .+$/gm)].map((m) => m[0]), [
@@ -179,7 +180,7 @@ test('session ordering precedes limits in flat and weekly reports without changi
     assert.match(weekly, /MONTH TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
   }
   assert.match(sessionLines(render('week', 'date', 1))[0], /^\(unknown session\)/);
-  assert.match(sessionLines(render('week', 'credits', 1))[0], /^orphan/);
+  assert.match(sessionLines(render('week', 'cost', 1))[0], /^orphan/);
   assert.deepEqual(rows, original);
 });
 
@@ -198,7 +199,7 @@ test('session order ties use recorded credits, calls, and IDs deterministically,
       .map((line) => line.trim().split(/\s+/)[0]);
   };
   assert.deepEqual(ids('date'), ['more-calls', 'a-id', 'z-id', 'null-cost', 'older-cost']);
-  assert.deepEqual(ids('credits'), ['older-cost', 'more-calls', 'a-id', 'z-id', 'null-cost']);
+  assert.deepEqual(ids('cost'), ['older-cost', 'more-calls', 'a-id', 'z-id', 'null-cost']);
   const reversed = formatReport([...rows].reverse(), '2026-10', 'test.db', { by: 'session', group: 'flat', order: 'date' });
   assert.equal(reversed, formatReport(rows, '2026-10', 'test.db', { by: 'session', group: 'flat', order: 'date' }));
 });
@@ -302,7 +303,12 @@ test('CLI supports session reports, unlimited output, help, and invalid options'
   assert.match(weekly, /Date \(UTC\)/);
   assert.doesNotMatch(weekly, /Updated\/start|last updated/);
   assert.match(weekly, /MONTH TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
-  assert.match(run('--help'), /--order credits\|date/);
+  assert.match(run('--help'), /--order cost\|date/);
+  const costOrdered = run('--month', '2026-10', '--db', costDbPath, '--by', 'session',
+    '--group', 'flat', '--order', 'cost', '--limit', '1');
+  assert.match(costOrdered, /Fix the build/);
+  assert.match(costOrdered, /AI credits/);
+  assert.doesNotMatch(costOrdered, /\(unknown session\)/);
   for (const group of ['week', 'flat']) {
     const dated = run('--month', '2026-10', '--db', costDbPath, '--by', 'session', '--group', group, '--order', 'date', '--limit', '1');
     assert.match(dated, /\(unknown session\)\s+N\/A\s+N\/A\s+2026-10-10/);
@@ -310,7 +316,7 @@ test('CLI supports session reports, unlimited output, help, and invalid options'
     assert.match(dated, /TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
   }
   for (const args of [['--by', 'invalid'], ['--limit=-1'], ['--limit', '-1'], ['--group', 'week'], ['--group', 'invalid'],
-    ['--order', 'date'], ['--by', 'model', '--order', 'credits'], ['--by', 'session', '--order', 'invalid']]) {
+    ['--order', 'date'], ['--by', 'model', '--order', 'cost'], ['--by', 'session', '--order', 'credits'], ['--by', 'session', '--order', 'invalid']]) {
     assert.throws(() => run(...args), (error) => error.status === 1 && /Error: .*--/.test(error.stderr));
   }
   assert.match(run('--month', '2025-01', '--db', costDbPath, '--by', 'session'), /No recorded model calls/);

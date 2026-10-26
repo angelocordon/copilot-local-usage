@@ -25,10 +25,10 @@ export function reportOptions({ by = 'model', limit = '30', group = by === 'sess
   if (!['week', 'flat'].includes(group) || (by !== 'session' && group === 'week')) {
     throw new Error('--group must be week or flat; week requires --by session');
   }
-  if (order !== undefined && (!['credits', 'date'].includes(order) || by !== 'session')) {
-    throw new Error('--order must be credits or date and requires --by session');
+  if (order !== undefined && (!['cost', 'date'].includes(order) || by !== 'session')) {
+    throw new Error('--order must be cost or date and requires --by session');
   }
-  const ordering = by === 'session' ? { order: order ?? 'credits' } : {};
+  const ordering = by === 'session' ? { order: order ?? 'cost' } : {};
   if (limit === 'all') return { by, limit: 0, group, ...ordering };
   if (!/^\d+$/.test(String(limit)) || !Number.isSafeInteger(Number(limit))) {
     throw new Error('--limit must be a non-negative integer or all');

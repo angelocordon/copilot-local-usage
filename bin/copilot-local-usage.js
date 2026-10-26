@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { currentMonth, formatReport, monthBounds, readUsage, reportOptions } from '../src/usage.js';
 
-const HELP = `Usage: copilot-local-usage [--month YYYY-MM] [--db PATH] [--by model|session] [--limit N|all] [--group week|flat] [--order credits|date]
+const HELP = `Usage: copilot-local-usage [--month YYYY-MM] [--db PATH] [--by model|session] [--limit N|all] [--group week|flat] [--order cost|date]
 
 Print monthly usage from the Copilot app's local session database.
 
@@ -14,7 +14,7 @@ Options:
   --by model|session  Group by model (default) or session
   --group week|flat  Session tables by first-call week in the month (default) or flat
   --limit N|all    Sessions per table (default: 30; 0 or all shows every session)
-  --order credits|date  Session order: highest credits (default) or newest first-call date
+  --order cost|date  Session order: highest estimated cost (default) or newest first-call date
   -h, --help       Show this help
 
 Reports locally retained model calls and estimated cost, not user prompts

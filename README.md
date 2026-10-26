@@ -34,12 +34,13 @@ npx github:angelocordon/copilot-local-usage --by session --group flat --order da
 
 Sessions are split into **Monday-Sunday UTC weekly tables**, newest week first,
 using the first recorded call in the selected month. Each session appears once.
-Sessions within each table are ranked by AI credits, highest first (the default
-`--order credits`). Use `--order date` to sort by **Date (UTC)**,
+Sessions within each table are ranked by estimated cost, highest first (the default
+`--order cost`). Cost and AI-credit ordering are identical because estimated
+USD is AI credits multiplied by $0.01. Use `--order date` to sort by **Date (UTC)**,
 newest first. Sorting happens before `--limit` in both weekly and flat tables;
-weekly headings remain newest-first. Date ties use credits descending, then
-call count descending and session ID ascending. Credit ties use call count
-descending and session ID ascending. Missing credits sort after recorded values.
+weekly headings remain newest-first. Date ties use cost descending, then
+call count descending and session ID ascending. Cost ties use call count
+descending and session ID ascending. Missing costs sort after recorded values.
 Each row includes a title, short session ID, repository, **Date (UTC)**,
 call count, AI credits, estimated USD, and the subagent portion of that estimate.
 The title uses the summary's first line
@@ -81,7 +82,7 @@ They still contribute to the monthly total exactly once.
 | `--by model\|session` | Group by model (default) or by session |
 | `--group week\|flat` | Session tables by first-call week in the selected month, or one flat table (default: `week` for sessions, `flat` for models). `week` requires `--by session`. |
 | `--limit N\|all` | Sessions per table (default: 30; `0` or `all` shows everything). Does not limit model reports or totals. |
-| `--order credits\|date` | Session order before limiting: highest credits (default) or newest first-call date. Requires `--by session`. |
+| `--order cost\|date` | Session order before limiting: highest estimated cost (default) or newest first-call date. Requires `--by session`. |
 | `-h, --help` | Show help |
 
 ## Requirements
