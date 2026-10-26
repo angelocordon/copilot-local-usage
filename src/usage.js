@@ -18,15 +18,18 @@ export function currentMonth(now = new Date()) {
   return now.toISOString().slice(0, 7);
 }
 
-export function reportOptions({ by = 'model', limit = '30' } = {}) {
+export function reportOptions({ by = 'model', limit = '30', group = by === 'session' ? 'week' : 'flat' } = {}) {
   if (!['model', 'session'].includes(by)) {
     throw new Error('--by must be model or session');
   }
-  if (limit === 'all') return { by, limit: 0 };
+  if (!['week', 'flat'].includes(group) || (by !== 'session' && group === 'week')) {
+    throw new Error('--group must be week or flat; week requires --by session');
+  }
+  if (limit === 'all') return { by, limit: 0, group };
   if (!/^\d+$/.test(String(limit)) || !Number.isSafeInteger(Number(limit))) {
     throw new Error('--limit must be a non-negative integer or all');
   }
-  return { by, limit: Number(limit) };
+  return { by, limit: Number(limit), group };
 }
 
 export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } = {}) {
@@ -52,6 +55,7 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
       ? "COALESCE(NULLIF(e.copilot_usage_model, ''), e.model)"
       : 'e.model';
     const cost = columns.has('total_nano_aiu') ? 'e.total_nano_aiu' : 'NULL';
+    const agent = columns.has('agent_id') ? "NULLIF(e.agent_id, '') IS NOT NULL" : null;
     const sessionView = by === 'session';
     if (sessionView && !columns.has('session_id')) {
       throw new Error('Session reporting is unavailable: this database has no session_id usage data.');
@@ -67,6 +71,7 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
          ${metadata('summary')} AS summary,
          ${metadata('repository')} AS repository,
          ${metadata('branch')} AS branch,
+         date(${metadata('updated_at')}) AS updatedAt,
          MIN(e.created_at) AS start`
       : `${model} AS model`;
     // Compare date prefixes to handle both SQLite and ISO timestamps.
@@ -77,7 +82,9 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
                 SUM(COALESCE(e.output_tokens, 0)) AS outputTokens,
                 COUNT(e.output_tokens) AS callsWithOutputTokens,
                 SUM(${cost}) / 1000000000.0 AS credits,
-                COUNT(${cost}) AS callsWithCost
+                COUNT(${cost}) AS callsWithCost,
+                ${agent ? `SUM(CASE WHEN ${agent} THEN 1 ELSE 0 END)` : 'NULL'} AS subagentCalls,
+                ${agent ? `SUM(CASE WHEN ${agent} THEN ${cost} END)` : 'NULL'} / 1000000000.0 AS subagentCredits
          FROM assistant_usage_events e
          ${joinSessions ? 'LEFT JOIN sessions s ON s.id = e.session_id' : ''}
          WHERE substr(e.created_at, 1, 10) >= ?
@@ -92,7 +99,11 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
           summary: row.summary,
           repository: row.repository,
           branch: row.branch,
+          updatedAt: row.updatedAt,
           start: row.start,
+          subagentCalls: row.subagentCalls === null ? null : Number(row.subagentCalls),
+          subagentCredits: row.subagentCalls === 0 ? 0
+            : row.subagentCredits === null ? null : Number(row.subagentCredits),
         } : { model: String(row.model) }),
         calls: Number(row.calls),
         outputTokens: Number(row.outputTokens),
@@ -110,8 +121,32 @@ function compact(value, max) {
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
+function sessionDate(row) {
+  return row.updatedAt || String(row.start).slice(0, 10);
+}
+
+function weekBounds(day) {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
+  const start = date.toISOString().slice(0, 10);
+  date.setUTCDate(date.getUTCDate() + 6);
+  return { start, end: date.toISOString().slice(0, 10) };
+}
+
+function sumRows(rows) {
+  const sum = (key) => rows.reduce((total, row) => total + (row[key] ?? 0), 0);
+  const optionalSum = (key) => rows.some((row) => row[key] != null) ? sum(key) : null;
+  return {
+    calls: sum('calls'),
+    outputTokens: sum('outputTokens'),
+    credits: optionalSum('credits'),
+    subagentCredits: optionalSum('subagentCredits'),
+  };
+}
+
 export function formatReport(rows, month, path, options = {}) {
-  const { by, limit } = reportOptions(options);
+  const { by, limit, group } = reportOptions(options);
   const sessionView = by === 'session';
   const fmt = (n) => n.toLocaleString('en-US');
   const decimal = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -121,37 +156,72 @@ export function formatReport(rows, month, path, options = {}) {
   if (rows.length === 0) {
     lines.push('No recorded model calls for this month.');
   } else {
-    const totals = {
-      calls: rows.reduce((sum, r) => sum + r.calls, 0),
-      outputTokens: rows.reduce((sum, r) => sum + r.outputTokens, 0),
-      credits: rows.some((r) => r.credits != null)
-        ? rows.reduce((sum, r) => sum + (r.credits ?? 0), 0) : null,
-    };
     const headers = sessionView
-      ? ['Session', 'ID', 'Repository', 'Start (UTC)', 'Recorded calls', 'AI credits', 'Est. USD']
+      ? ['Session', 'ID', 'Repository', 'Updated/start', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD']
       : ['Model', 'Recorded calls', 'Output tokens', 'AI credits', 'Est. USD'];
-    const visible = sessionView && limit ? rows.slice(0, limit) : rows;
-    const body = visible.map((r) => sessionView ? [
-      compact(r.summary?.split(/\r?\n/)[0], 48) ||
-        compact([r.repository, r.branch].filter(Boolean).join(' / '), 48) ||
-        compact(r.sessionId, 12) || '(unknown session)',
-      compact(r.sessionId, 12) || 'N/A',
-      compact(r.repository, 32) || 'N/A',
-      String(r.start).slice(0, 10),
-      fmt(r.calls),
-      ...costs(r),
-    ] : [compact(r.model, 60), fmt(r.calls), fmt(r.outputTokens), ...costs(r)]);
-    const total = sessionView
-      ? ['TOTAL', '', '', '', fmt(totals.calls), ...costs(totals)]
-      : ['TOTAL', fmt(totals.calls), fmt(totals.outputTokens), ...costs(totals)];
-    const widths = headers.map((h, i) => Math.max(h.length, ...[...body, total].map((r) => r[i].length)));
-    const textColumns = sessionView ? 4 : 1;
-    const line = (r) => r.map((cell, i) => i < textColumns ? cell.padEnd(widths[i]) : cell.padStart(widths[i])).join('  ');
-    const separator = widths.map((w) => '-'.repeat(w)).join('  ');
+    const sessionCosts = (r) => [...costs(r), costs({ credits: r.subagentCredits })[1]];
+    const totalRow = (label, entries) => {
+      const totals = sumRows(entries);
+      return sessionView
+        ? [label, '', '', '', fmt(totals.calls), ...sessionCosts(totals)]
+        : [label, fmt(totals.calls), fmt(totals.outputTokens), ...costs(totals)];
+    };
+    const table = (body, total, tableHeaders = headers, textColumns = sessionView ? 4 : 1) => {
+      const widths = tableHeaders.map((h, i) => Math.max(h.length, ...[...body, total].map((r) => r[i].length)));
+      const line = (r) => r.map((cell, i) => i < textColumns ? cell.padEnd(widths[i]) : cell.padStart(widths[i])).join('  ');
+      const separator = widths.map((w) => '-'.repeat(w)).join('  ');
+      lines.push(line(tableHeaders), separator, ...body.map(line));
+      if (body.length) lines.push(separator);
+      lines.push(line(total));
+    };
+    const renderTable = (entries, label) => {
+      const visible = sessionView && limit ? entries.slice(0, limit) : entries;
+      const body = visible.map((r) => sessionView ? [
+        compact(r.summary?.split(/\r?\n/)[0], 48) ||
+          compact([r.repository, r.branch].filter(Boolean).join(' / '), 48) ||
+          compact(r.sessionId, 12) || '(unknown session)',
+        compact(r.sessionId, 12) || 'N/A',
+        compact(r.repository, 32) || 'N/A',
+        sessionDate(r),
+        fmt(r.calls),
+        ...sessionCosts(r),
+      ] : [compact(r.model, 60), fmt(r.calls), fmt(r.outputTokens), ...costs(r)]);
+      table(body, totalRow(label, entries));
+      if (visible.length < entries.length) {
+        lines.push('', `Showing ${fmt(visible.length)} of ${fmt(entries.length)} sessions; ${label} includes all sessions${group === 'week' ? ' in this group' : ''}. Use --limit all to show every session.`);
+      }
+    };
 
-    lines.push(line(headers), separator, ...body.map(line), separator, line(total));
-    if (visible.length < rows.length) {
-      lines.push('', `Showing ${fmt(visible.length)} of ${fmt(rows.length)} sessions; TOTAL includes all sessions. Use --limit all to show every session.`);
+    if (sessionView && group === 'week') {
+      lines.push('Sessions grouped by last updated date (fallback: first recorded call), Monday-Sunday UTC.',
+        'Costs are for the selected month, not spend within each week.', '');
+      const weeks = new Map();
+      for (const row of rows) {
+        const bounds = weekBounds(sessionDate(row));
+        const key = bounds?.start ?? 'Unknown date';
+        if (!weeks.has(key)) weeks.set(key, { bounds, entries: [] });
+        weeks.get(key).entries.push(row);
+      }
+      for (const key of [...weeks.keys()].sort().reverse()) {
+        const { bounds, entries } = weeks.get(key);
+        lines.push(bounds ? `Week ${bounds.start} to ${bounds.end}` : key, '');
+        renderTable(entries, 'WEEK TOTAL');
+        lines.push('');
+      }
+      const totals = sumRows(rows);
+      table([], ['MONTH TOTAL', fmt(totals.calls), ...sessionCosts(totals)],
+        ['Summary', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD'], 1);
+    } else {
+      renderTable(rows, 'TOTAL');
+    }
+
+    if (sessionView) {
+      const subagentCalls = rows.reduce((sum, r) => sum + (r.subagentCalls ?? 0), 0);
+      lines.push('', `Subagent USD is included in Est. USD, not added again (${fmt(subagentCalls)} identified subagent calls).`,
+        'Subagents sharing a session ID are included. Separate child sessions remain separate; parent links are not available in this database.');
+      if (rows.some((r) => r.subagentCalls == null)) {
+        lines.push('Note: Subagent attribution is unavailable for some calls in this database schema.');
+      }
     }
 
     const missingCost = rows.reduce((sum, r) => sum + r.calls - (r.callsWithCost ?? 0), 0);

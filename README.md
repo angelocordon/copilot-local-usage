@@ -27,15 +27,39 @@ Example values above are illustrative.
 npx github:angelocordon/copilot-local-usage --by session
 npx github:angelocordon/copilot-local-usage --by session --month 2026-10 --limit 10
 npx github:angelocordon/copilot-local-usage --by session --limit all
+npx github:angelocordon/copilot-local-usage --by session --group flat
 ```
 
-Sessions are ranked by estimated cost, highest first. Each row includes a title,
-short session ID, repository, first recorded call date in the selected month (UTC),
-call count, AI credits, and estimated USD. The title uses the summary's first line
+Sessions are split into **Monday-Sunday UTC weekly tables**, newest week first,
+using `sessions.updated_at` (falling back to the first recorded call in the selected
+month when the update is missing or invalid). Each session appears once.
+Sessions within each table are ranked by estimated cost, highest first.
+Each row includes a title, short session ID, repository, update/fallback date (UTC),
+call count, AI credits, estimated USD, and the subagent portion of that estimate.
+The title uses the summary's first line
 (truncated), falling back to repository/branch or session ID. Calls across all
 models in a session are combined; only calls in the selected month count.
-The default shows 30 sessions; the **TOTAL always covers all sessions in the month**,
-even when the list is limited.
+The default shows 30 sessions **per weekly table**. Week subtotals include all
+sessions in that group even when limited, and **MONTH TOTAL covers every session**.
+Use `--group flat` for a single cost-ranked table with the same monthly total.
+
+These are activity-date groups, **not weekly spending totals**: costs still count
+only calls in the selected month, and a session's entire monthly cost goes into
+its update-date group. Later activity can move a session into a different week,
+even outside the selected month; the local database retains only its latest update.
+
+### Nested sessions and subagents
+
+Calls attributed to subagents (`assistant_usage_events.agent_id`) under the same
+`session_id` are already included in the session's total, across all nesting
+levels recorded with that ID. **Subagent USD is a subset of Est. USD**, not an
+additional charge. It uses the same recorded-credit calculation; missing
+attribution or cost data is shown as `N/A`, with a note for partial records.
+
+Child sessions created with their own session IDs are shown as separate rows.
+The current local schema has no parent-session link, so the report cannot
+reliably roll them into a parent total or infer nesting from titles or repositories.
+They still contribute to the monthly total exactly once.
 
 ## Options
 
@@ -44,7 +68,8 @@ even when the list is limited.
 | `--month YYYY-MM` | Month to report (default: current UTC month) |
 | `--db PATH` | Database path (default: `~/.copilot/session-store.db`) |
 | `--by model\|session` | Group by model (default) or by session |
-| `--limit N\|all` | Sessions to show (default: 30; `0` or `all` shows everything). Does not limit model reports or totals. |
+| `--group week\|flat` | Session table layout (default: `week` for sessions, `flat` for models). `week` requires `--by session`. |
+| `--limit N\|all` | Sessions per table (default: 30; `0` or `all` shows everything). Does not limit model reports or totals. |
 | `-h, --help` | Show help |
 
 ## Requirements
