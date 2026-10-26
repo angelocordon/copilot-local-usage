@@ -1,0 +1,31 @@
+{
+  "name": "copilot-local-usage",
+  "version": "0.1.0",
+  "description": "Print monthly GitHub Copilot model usage from your local session database",
+  "type": "module",
+  "bin": {
+    "copilot-local-usage": "bin/copilot-local-usage.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test --no-warnings=ExperimentalWarning"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "keywords": [
+    "copilot",
+    "github",
+    "usage",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/angelocordon/copilot-local-usage.git"
+  },
+  "author": "Angelo Cordon",
+  "license": "MIT"
+}
