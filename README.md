@@ -31,10 +31,9 @@ npx github:angelocordon/copilot-local-usage --by session --group flat
 ```
 
 Sessions are split into **Monday-Sunday UTC weekly tables**, newest week first,
-using `sessions.updated_at` (falling back to the first recorded call in the selected
-month when the update is missing or invalid). Each session appears once.
+using the first recorded call in the selected month. Each session appears once.
 Sessions within each table are ranked by estimated cost, highest first.
-Each row includes a title, short session ID, repository, update/fallback date (UTC),
+Each row includes a title, short session ID, repository, **First call (UTC)** date,
 call count, AI credits, estimated USD, and the subagent portion of that estimate.
 The title uses the summary's first line
 (truncated), falling back to repository/branch or session ID. Calls across all
@@ -43,10 +42,15 @@ The default shows 30 sessions **per weekly table**. Week subtotals include all
 sessions in that group even when limited, and **MONTH TOTAL covers every session**.
 Use `--group flat` for a single cost-ranked table with the same monthly total.
 
-These are activity-date groups, **not weekly spending totals**: costs still count
+The first-call date is `MIN(assistant_usage_events.created_at)` after filtering
+to the selected month, **not necessarily the session's lifetime start**. Session
+update dates are not used. Both weekly and flat tables show this same date.
+
+These are first-call groups, **not weekly spending totals**: costs still count
 only calls in the selected month, and a session's entire monthly cost goes into
-its update-date group. Later activity can move a session into a different week,
-even outside the selected month; the local database retains only its latest update.
+its first-call week. Later calls in other weeks are included in that same row.
+A heading such as `Week 2026-10-19 to 2026-10-25` is a grouping range, not a
+data cutoff.
 
 ### Nested sessions and subagents
 
@@ -68,7 +72,7 @@ They still contribute to the monthly total exactly once.
 | `--month YYYY-MM` | Month to report (default: current UTC month) |
 | `--db PATH` | Database path (default: `~/.copilot/session-store.db`) |
 | `--by model\|session` | Group by model (default) or by session |
-| `--group week\|flat` | Session table layout (default: `week` for sessions, `flat` for models). `week` requires `--by session`. |
+| `--group week\|flat` | Session tables by first-call week in the selected month, or one flat table (default: `week` for sessions, `flat` for models). `week` requires `--by session`. |
 | `--limit N\|all` | Sessions per table (default: 30; `0` or `all` shows everything). Does not limit model reports or totals. |
 | `-h, --help` | Show help |
 

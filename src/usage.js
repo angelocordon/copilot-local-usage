@@ -71,7 +71,6 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
          ${metadata('summary')} AS summary,
          ${metadata('repository')} AS repository,
          ${metadata('branch')} AS branch,
-         date(${metadata('updated_at')}) AS updatedAt,
          MIN(e.created_at) AS start`
       : `${model} AS model`;
     // Compare date prefixes to handle both SQLite and ISO timestamps.
@@ -99,7 +98,6 @@ export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } =
           summary: row.summary,
           repository: row.repository,
           branch: row.branch,
-          updatedAt: row.updatedAt,
           start: row.start,
           subagentCalls: row.subagentCalls === null ? null : Number(row.subagentCalls),
           subagentCredits: row.subagentCalls === 0 ? 0
@@ -122,7 +120,7 @@ function compact(value, max) {
 }
 
 function sessionDate(row) {
-  return row.updatedAt || String(row.start).slice(0, 10);
+  return String(row.start).slice(0, 10);
 }
 
 function weekBounds(day) {
@@ -157,7 +155,7 @@ export function formatReport(rows, month, path, options = {}) {
     lines.push('No recorded model calls for this month.');
   } else {
     const headers = sessionView
-      ? ['Session', 'ID', 'Repository', 'Updated/start', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD']
+      ? ['Session', 'ID', 'Repository', 'First call (UTC)', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD']
       : ['Model', 'Recorded calls', 'Output tokens', 'AI credits', 'Est. USD'];
     const sessionCosts = (r) => [...costs(r), costs({ credits: r.subagentCredits })[1]];
     const totalRow = (label, entries) => {
@@ -192,8 +190,11 @@ export function formatReport(rows, month, path, options = {}) {
       }
     };
 
+    if (sessionView) {
+      lines.push('First call is the first recorded call in the selected month, not necessarily the session start.', '');
+    }
     if (sessionView && group === 'week') {
-      lines.push('Sessions grouped by last updated date (fallback: first recorded call), Monday-Sunday UTC.',
+      lines.push('Sessions grouped by first recorded call in the selected month, Monday-Sunday UTC.',
         'Costs are for the selected month, not spend within each week.', '');
       const weeks = new Map();
       for (const row of rows) {

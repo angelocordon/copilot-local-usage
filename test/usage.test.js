@@ -124,6 +124,10 @@ test('session costs aggregate across models, sort by cost, and retain missing me
   assert.equal(rows[1].summary, null);
   const output = formatReport(rows, '2026-10', costDbPath, { by: 'session', limit: 1, group: 'flat' });
   assert.match(output, /Fix the build/);
+  assert.match(output, /First call \(UTC\)/);
+  assert.match(output, /2026-10-01/);
+  assert.doesNotMatch(output, /Updated\/start|2026-10-18/);
+  assert.match(output, /first recorded call in the selected month, not necessarily the session start/);
   assert.doesNotMatch(output, /Ignore this second line/);
   assert.match(output, /2,500\.00\s+\$25\.00/);
   assert.match(output, /TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
@@ -161,24 +165,24 @@ test('subagent costs are a subset of session totals, not additional charges', ()
   assert.match(output, /Separate child sessions remain separate/);
 });
 
-test('weekly tables use update dates, fallback dates, and cost ordering within each week', () => {
+test('weekly tables use first monthly calls, ignore updates, and preserve cost ordering and totals', () => {
   const rows = readUsage(DatabaseSync, costDbPath, monthBounds('2026-10'), { by: 'session' });
-  assert.equal(rows[0].updatedAt, '2026-10-18');
-  assert.equal(rows.find((r) => r.sessionId === 'empty').updatedAt, null);
+  assert.equal(rows[0].start, '2026-10-01 01:00:00');
   const output = formatReport(rows, '2026-10', costDbPath, { by: 'session', limit: 1 });
   const headings = [...output.matchAll(/^Week .+$/gm)].map((match) => match[0]);
   assert.deepEqual(headings, [
-    'Week 2026-10-19 to 2026-10-25',
-    'Week 2026-10-12 to 2026-10-18',
     'Week 2026-10-05 to 2026-10-11',
+    'Week 2026-09-28 to 2026-10-04',
   ]);
   assert.match(output, /WEEK TOTAL\s+3\s+2,500\.00\s+\$25\.00\s+\$5\.00/);
-  assert.match(output, /Showing 1 of 3 sessions; WEEK TOTAL includes all sessions in this group/);
+  assert.match(output, /Showing 1 of 4 sessions; WEEK TOTAL includes all sessions in this group/);
+  assert.match(output, /orphan\s+orphan\s+N\/A\s+2026-10-07/);
+  assert.match(output, /Fix the build\s+expensive\s+owner\/repo\s+2026-10-01/);
   assert.match(output, /MONTH TOTAL\s+7\s+2,501\.00\s+\$25\.01\s+\$5\.01/);
   assert.match(output, /Costs are for the selected month, not spend within each week/);
 });
 
-test('weekly grouping handles UTC offsets, year boundaries, and updates outside the report month', () => {
+test('weekly grouping handles year boundaries and ignores updates outside the report month', () => {
   const path = join(dir, 'weekly-dates.db');
   const db = new DatabaseSync(path);
   db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, updated_at TEXT);
@@ -187,13 +191,18 @@ test('weekly grouping handles UTC offsets, year boundaries, and updates outside 
     INSERT INTO assistant_usage_events VALUES
       ('offset', 'model', '2026-12-01', 1),
       ('future', 'model', '2026-12-02', 1),
+      ('offset', 'model', '2026-11-30', 99),
+      ('offset', 'model', '2027-01-01', 99),
       ('missing', 'model', '2026-12-31', 1);`);
   db.close();
   const rows = readUsage(DatabaseSync, path, monthBounds('2026-12'), { by: 'session' });
-  assert.equal(rows.find((r) => r.sessionId === 'offset').updatedAt, '2027-01-03');
+  assert.equal(rows.find((r) => r.sessionId === 'offset').start, '2026-12-01');
   const output = formatReport(rows, '2026-12', path, { by: 'session' });
   assert.match(output, /Week 2026-12-28 to 2027-01-03/);
-  assert.match(output, /Week 2027-02-01 to 2027-02-07/);
+  assert.match(output, /Week 2026-11-30 to 2026-12-06/);
+  assert.doesNotMatch(output, /Week 2027-02-01/);
+  assert.match(output, /offset\s+offset\s+N\/A\s+2026-12-01/);
+  assert.match(output, /future\s+future\s+N\/A\s+2026-12-02/);
   assert.match(output, /MONTH TOTAL\s+3\s+N\/A\s+N\/A/);
 });
 
@@ -237,7 +246,9 @@ test('CLI supports session reports, unlimited output, help, and invalid options'
   }
   assert.match(run('--help'), /--by model\|session/);
   const weekly = run('--month', '2026-10', '--db', costDbPath, '--by', 'session', '--limit', '1');
-  assert.match(weekly, /Week 2026-10-19 to 2026-10-25/);
+  assert.match(weekly, /Week 2026-09-28 to 2026-10-04/);
+  assert.match(weekly, /First call \(UTC\)/);
+  assert.doesNotMatch(weekly, /Updated\/start|last updated/);
   assert.match(weekly, /MONTH TOTAL\s+7\s+2,501\.00\s+\$25\.01/);
   for (const args of [['--by', 'invalid'], ['--limit=-1'], ['--limit', '-1'], ['--group', 'week'], ['--group', 'invalid']]) {
     assert.throws(() => run(...args), (error) => error.status === 1 && /Error: .*--/.test(error.stderr));

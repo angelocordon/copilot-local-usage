@@ -12,7 +12,7 @@ Options:
   --month YYYY-MM  Month to report (default: current UTC month)
   --db PATH        Local session database (default: ~/.copilot/session-store.db)
   --by model|session  Group by model (default) or session, ranked by estimated cost
-  --group week|flat  Session tables by update week (default) or a single flat table
+  --group week|flat  Session tables by first-call week in the month (default) or flat
   --limit N|all    Sessions per table (default: 30; 0 or all shows every session)
   -h, --help       Show this help
 
