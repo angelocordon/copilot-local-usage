@@ -18,18 +18,22 @@ export function currentMonth(now = new Date()) {
   return now.toISOString().slice(0, 7);
 }
 
-export function reportOptions({ by = 'model', limit = '30', group = by === 'session' ? 'week' : 'flat' } = {}) {
+export function reportOptions({ by = 'model', limit = '30', group = by === 'session' ? 'week' : 'flat', order } = {}) {
   if (!['model', 'session'].includes(by)) {
     throw new Error('--by must be model or session');
   }
   if (!['week', 'flat'].includes(group) || (by !== 'session' && group === 'week')) {
     throw new Error('--group must be week or flat; week requires --by session');
   }
-  if (limit === 'all') return { by, limit: 0, group };
+  if (order !== undefined && (!['credits', 'date'].includes(order) || by !== 'session')) {
+    throw new Error('--order must be credits or date and requires --by session');
+  }
+  const ordering = by === 'session' ? { order: order ?? 'credits' } : {};
+  if (limit === 'all') return { by, limit: 0, group, ...ordering };
   if (!/^\d+$/.test(String(limit)) || !Number.isSafeInteger(Number(limit))) {
     throw new Error('--limit must be a non-negative integer or all');
   }
-  return { by, limit: Number(limit), group };
+  return { by, limit: Number(limit), group, ...ordering };
 }
 
 export function readUsage(DatabaseSync, path, { start, end }, { by = 'model' } = {}) {
@@ -123,6 +127,14 @@ function sessionDate(row) {
   return String(row.start).slice(0, 10);
 }
 
+function compareSessions(a, b, order) {
+  const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+  const byCredits = compare(b.credits ?? -Infinity, a.credits ?? -Infinity);
+  const byDate = compare(sessionDate(b), sessionDate(a));
+  return (order === 'date' ? byDate || byCredits : byCredits) ||
+    b.calls - a.calls || compare(a.sessionId ?? '', b.sessionId ?? '');
+}
+
 function weekBounds(day) {
   const date = new Date(`${day}T00:00:00Z`);
   if (!Number.isFinite(date.getTime())) return null;
@@ -144,7 +156,7 @@ function sumRows(rows) {
 }
 
 export function formatReport(rows, month, path, options = {}) {
-  const { by, limit, group } = reportOptions(options);
+  const { by, limit, group, order } = reportOptions(options);
   const sessionView = by === 'session';
   const fmt = (n) => n.toLocaleString('en-US');
   const decimal = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -155,7 +167,7 @@ export function formatReport(rows, month, path, options = {}) {
     lines.push('No recorded model calls for this month.');
   } else {
     const headers = sessionView
-      ? ['Session', 'ID', 'Repository', 'First call (UTC)', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD']
+      ? ['Session', 'ID', 'Repository', 'Date (UTC)', 'Recorded calls', 'AI credits', 'Est. USD', 'Subagent USD']
       : ['Model', 'Recorded calls', 'Output tokens', 'AI credits', 'Est. USD'];
     const sessionCosts = (r) => [...costs(r), costs({ credits: r.subagentCredits })[1]];
     const totalRow = (label, entries) => {
@@ -173,7 +185,8 @@ export function formatReport(rows, month, path, options = {}) {
       lines.push(line(total));
     };
     const renderTable = (entries, label) => {
-      const visible = sessionView && limit ? entries.slice(0, limit) : entries;
+      const sorted = sessionView ? [...entries].sort((a, b) => compareSessions(a, b, order)) : entries;
+      const visible = sessionView && limit ? sorted.slice(0, limit) : sorted;
       const body = visible.map((r) => sessionView ? [
         compact(r.summary?.split(/\r?\n/)[0], 48) ||
           compact([r.repository, r.branch].filter(Boolean).join(' / '), 48) ||
@@ -191,7 +204,7 @@ export function formatReport(rows, month, path, options = {}) {
     };
 
     if (sessionView) {
-      lines.push('First call is the first recorded call in the selected month, not necessarily the session start.', '');
+      lines.push('Date is the first recorded call in the selected month, not necessarily the session start.', '');
     }
     if (sessionView && group === 'week') {
       lines.push('Sessions grouped by first recorded call in the selected month, Monday-Sunday UTC.',

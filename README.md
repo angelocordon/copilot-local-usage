@@ -28,19 +28,26 @@ npx github:angelocordon/copilot-local-usage --by session
 npx github:angelocordon/copilot-local-usage --by session --month 2026-10 --limit 10
 npx github:angelocordon/copilot-local-usage --by session --limit all
 npx github:angelocordon/copilot-local-usage --by session --group flat
+npx github:angelocordon/copilot-local-usage --by session --order date
+npx github:angelocordon/copilot-local-usage --by session --group flat --order date --limit 10
 ```
 
 Sessions are split into **Monday-Sunday UTC weekly tables**, newest week first,
 using the first recorded call in the selected month. Each session appears once.
-Sessions within each table are ranked by estimated cost, highest first.
-Each row includes a title, short session ID, repository, **First call (UTC)** date,
+Sessions within each table are ranked by AI credits, highest first (the default
+`--order credits`). Use `--order date` to sort by **Date (UTC)**,
+newest first. Sorting happens before `--limit` in both weekly and flat tables;
+weekly headings remain newest-first. Date ties use credits descending, then
+call count descending and session ID ascending. Credit ties use call count
+descending and session ID ascending. Missing credits sort after recorded values.
+Each row includes a title, short session ID, repository, **Date (UTC)**,
 call count, AI credits, estimated USD, and the subagent portion of that estimate.
 The title uses the summary's first line
 (truncated), falling back to repository/branch or session ID. Calls across all
 models in a session are combined; only calls in the selected month count.
 The default shows 30 sessions **per weekly table**. Week subtotals include all
 sessions in that group even when limited, and **MONTH TOTAL covers every session**.
-Use `--group flat` for a single cost-ranked table with the same monthly total.
+Use `--group flat` for a single table in the selected order with the same monthly total.
 
 The first-call date is `MIN(assistant_usage_events.created_at)` after filtering
 to the selected month, **not necessarily the session's lifetime start**. Session
@@ -74,6 +81,7 @@ They still contribute to the monthly total exactly once.
 | `--by model\|session` | Group by model (default) or by session |
 | `--group week\|flat` | Session tables by first-call week in the selected month, or one flat table (default: `week` for sessions, `flat` for models). `week` requires `--by session`. |
 | `--limit N\|all` | Sessions per table (default: 30; `0` or `all` shows everything). Does not limit model reports or totals. |
+| `--order credits\|date` | Session order before limiting: highest credits (default) or newest first-call date. Requires `--by session`. |
 | `-h, --help` | Show help |
 
 ## Requirements
